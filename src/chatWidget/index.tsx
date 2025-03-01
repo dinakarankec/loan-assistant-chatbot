@@ -1,8 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ChatTrigger from "./chatTrigger";
 import ChatWindow from "./chatWindow";
 import { ChatMessageType } from "../types/chatWidget";
-const { v4: uuidv4 } = require('uuid');
+import { sendMessage } from "../controllers";
+import { get } from "http";
+import { extractMessageFromOutput } from "./utils";
+const { v4: uuidv4 } = require("uuid");
 
 export default function ChatWidget({
   api_key,
@@ -32,12 +35,13 @@ export default function ChatWidget({
   input_container_style,
   additional_headers,
   session_id,
-  start_open=false,
+  start_open = false,
+  loan_id,
 }: {
   api_key?: string;
-  input_value: string,
-  output_type: string,
-  input_type: string,
+  input_value: string;
+  output_type: string;
+  input_type: string;
   output_component?: string;
   send_icon_style?: React.CSSProperties;
   chat_position?: string;
@@ -63,6 +67,7 @@ export default function ChatWidget({
   additional_headers?: { [key: string]: string };
   session_id?: string;
   start_open?: boolean;
+  loan_id: string;
 }) {
   const [open, setOpen] = useState(start_open);
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
@@ -602,7 +607,7 @@ video {
   justify-content: center;
   border-radius: 9999px;
   --tw-bg-opacity: 1;
-  background-color: rgb(59 130 246 / var(--tw-bg-opacity));
+  background-color: #EE654C;
   font-weight: 700;
   --tw-text-opacity: 1;
   color: rgb(255 255 255 / var(--tw-text-opacity));
@@ -613,7 +618,7 @@ video {
 
 .cl-trigger:hover {
   --tw-bg-opacity: 1;
-  background-color: rgb(29 78 216 / var(--tw-bg-opacity));
+  background-color: #EE654C;
 }
 
 .cl-window {
@@ -657,6 +662,9 @@ video {
   transition-property: all;
   transition-duration: 300ms;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  bottom: -26px;
+  right: 3px;
+  z-index: 9999;
 }
 
 .cl-online-message {
@@ -700,7 +708,7 @@ video {
   font-size: 0.875rem;
   line-height: 1.25rem;
   font-weight: 300;
-  color: rgb(107 114 128);
+  color: white;
 }
 
 .cl-header {
@@ -708,17 +716,15 @@ video {
   display: flex;
   flex-direction: column;
   --tw-bg-opacity: 1;
-  background-color: rgb(255 255 255 / var(--tw-bg-opacity));
+  background-color: black;
   padding-top: 1rem;
   padding-bottom: 1rem;
   padding-left: 1.5rem;
   padding-right: 1.5rem;
-  font-size: 1.125rem;
+  font-size: 1.125rem;l
   line-height: 1.75rem;
   font-weight: 400;
-  color: rgb(17 24 39);
-  --tw-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-  --tw-shadow-colored: 0 0 10px var(--tw-shadow-color);
+  color: white;
   box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
@@ -816,7 +822,7 @@ video {
   border-radius: 0.75rem;
   border-top-right-radius: 0.125rem;
   --tw-bg-opacity: 1;
-  background-color: rgb(59 130 246 / var(--tw-bg-opacity));
+  background-color: #EE654C;
   padding-left: 1rem;
   padding-right: 1rem;
   padding-top: 0.5rem;
@@ -905,7 +911,7 @@ video {
   --tw-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --tw-shadow-colored: 0 1px 3px 0 var(--tw-shadow-color), 0 1px 2px -1px var(--tw-shadow-color);
   box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
-} 
+}
 input::placeholder { /* Chrome, Firefox, Opera, Safari 10.1+ */
   color: rgb(156 163 175);
   opacity: 1; /* Firefox */
@@ -2137,10 +2143,75 @@ input::-ms-input-placeholder { /* Microsoft Edge */
 
 .markdown-body>*:first-child>.heading-element:first-child {
   margin-top: 0 !important;
-}`
+}`;
+
+  const sessionRef = useRef(session_id || "");
+
+  console.log("sessionRef", sessionRef);
+  useEffect(() => {
+    if (loan_id) {
+      const message = `Help me in querying the loan id: ${loan_id}`;
+      addMessage({
+        message,
+        isSend: true,
+      });
+      sendMessage(host_url, flow_id, message, "chat", "chat", sessionRef).then(
+        (res) => {
+          if (
+            res.data &&
+            res.data.outputs &&
+            Object.keys(res.data.outputs).length > 0 &&
+            res.data.outputs[0].outputs &&
+            res.data.outputs[0].outputs.length > 0
+          ) {
+            const flowOutputs: Array<any> = res.data.outputs[0].outputs;
+            if (flowOutputs.length === 1) {
+              Object.values(flowOutputs[0].outputs).forEach((output: any) => {
+                addMessage({
+                  message: extractMessageFromOutput(output),
+                  isSend: false,
+                });
+              });
+            } else {
+              flowOutputs
+                .sort((a, b) => {
+                  // Get the earliest timestamp from each flowOutput's outputs
+                  const aTimestamp = Math.min(
+                    ...Object.values(a.outputs).map((output: any) =>
+                      Date.parse(output.message?.timestamp)
+                    )
+                  );
+                  const bTimestamp = Math.min(
+                    ...Object.values(b.outputs).map((output: any) =>
+                      Date.parse(output.message?.timestamp)
+                    )
+                  );
+                  return aTimestamp - bTimestamp; // Sort descending (newest first)
+                })
+                .forEach((flowOutput) => {
+                  Object.values(flowOutput.outputs).forEach((output: any) => {
+                    addMessage({
+                      message: extractMessageFromOutput(output),
+                      isSend: false,
+                    });
+                  });
+                });
+            }
+          }
+          if (res.data && res.data.session_id) {
+            sessionRef.current = res.data.session_id;
+          }
+          // setSendingMessage(false);
+        }
+      );
+    }
+  }, [flow_id, host_url, loan_id]);
+
   return (
     <div style={{ position: "relative" }}>
-      <style dangerouslySetInnerHTML={{ __html: styles + markdownBody }}></style>
+      <style
+        dangerouslySetInnerHTML={{ __html: styles + markdownBody }}
+      ></style>
       <ChatTrigger
         triggerRef={triggerRef}
         open={open}
